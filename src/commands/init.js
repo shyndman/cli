@@ -6,8 +6,10 @@ const util = require("util");
 const exec = util.promisify(require("child_process").exec);
 const exists = util.promisify(fs.exists);
 const writeFile = util.promisify(fs.writeFile);
+const appendFile = util.promisify(fs.appendFile);
 const mkdir = util.promisify(fs.mkdir);
 const yaml = require("js-yaml");
+const os = require("os");
 
 const spinnerWith = require("../util/spinner");
 const selectProject = require("../util/projects");
@@ -82,6 +84,28 @@ class InitCommand extends Command {
       fs.writeSync(fd, currentData, 0, currentData.length, buffer.length);
     }
     fs.close(fd);
+  }
+
+  //update values within .env file. if value is not found it is written 
+  async _setEnvValue(filePath, key, value) {
+    let newEntry = `${key}=${value}`;
+    
+    if(fs.existsSync(filePath)){
+      
+      let ENV_VARS = fs.readFileSync(filePath, "utf8").split(os.EOL);
+      
+      let targetIndex = ENV_VARS.indexOf(ENV_VARS.find((line) => 
+      { 
+          return line.indexOf('=') >= 0 && line.split('=')[0].trim() == key
+      }));
+
+      targetIndex >= 0 ?  ENV_VARS.splice(targetIndex, 1, newEntry) : ENV_VARS.push(newEntry);
+      
+      fs.writeFileSync(filePath, ENV_VARS.join(os.EOL));
+    } else{
+
+      fs.appendFileSync(filePath, newEntry); 
+    }
   }
 
   async run() {
@@ -297,35 +321,38 @@ class InitCommand extends Command {
 
       // write ENV variables to .env.development
       spinner.text = "Adding env vars to .env.development";
-      await writeFile(
-        envFile,
-        project.project_env_vars
-          .map((envVar) => `${envVar.name}=${envVar.dev_value}`)
-          .join("\n")
-      );
+      await project.project_env_vars
+           .reduce( async (memo, envVar) => { 
+             await memo; 
+             await this._setEnvValue(envFile, envVar.name, envVar.dev_value);
+           }, undefined);
 
-      await writeFile(
+      await this._setEnvValue(
         envFile,
-        `\nREGISTRATION_CUSTOM_FIELDS=${project.hbp_REGISTRATION_CUSTOM_FIELDS}\n`
+        'REGISTRATION_CUSTOM_FIELDS',
+        project.hbp_REGISTRATION_CUSTOM_FIELDS
       );
 
       if (project.backend_user_fields) {
-        await this._writeToFileSync(
+        await this._setEnvValue(
           envFile,
-          `JWT_CUSTOM_FIELDS=${project.backend_user_fields}\n`
+          'JWT_CUSTOM_FIELDS',
+          project.backend_user_fields
         );
       }
 
       if (project.hbp_DEFAULT_ALLOWED_USER_ROLES) {
-        await this._writeToFileSync(
+        await this._setEnvValue(
           envFile,
-          `DEFAULT_ALLOWED_USER_ROLES=${project.hbp_DEFAULT_ALLOWED_USER_ROLES}\n`
+          'DEFAULT_ALLOWED_USER_ROLES',
+          project.hbp_DEFAULT_ALLOWED_USER_ROLES
         );
       }
       if (project.hbp_allowed_user_roles) {
-        await this._writeToFileSync(
+        await this._setEnvValue(
           envFile,
-          `ALLOWED_USER_ROLES=${project.hbp_allowed_user_roles}\n`
+          'ALLOWED_USER_ROLES',
+          project.hbp_allowed_user_roles
         );
       }
     } catch (error) {
